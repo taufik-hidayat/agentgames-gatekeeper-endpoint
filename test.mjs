@@ -175,7 +175,9 @@ async function main() {
         r.json?.proof_tx === input.proof_tx,
         JSON.stringify(r.json),
       );
-      const expectedSig = crypto.createHmac('sha256', TEST_SECRET).update(Buffer.from(r.rawBody, 'utf8')).digest('hex');
+      // Platform verifies response signatures with the UTF-8 bytes of the
+      // hex secret (see hmac.mjs signResponse) — not the raw decoded bytes.
+      const expectedSig = crypto.createHmac('sha256', Buffer.from(TEST_SECRET_HEX, 'utf8')).update(Buffer.from(r.rawBody, 'utf8')).digest('hex');
       check(`${name}: response signature valid`, r.respSig === expectedSig, `got ${r.respSig}`);
     }
 
