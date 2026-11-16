@@ -88,7 +88,13 @@ export function verifySignature(secretBuf, rawBodyBuf, headerValue) {
   return { ok: false, reason: 'signature-mismatch' };
 }
 
-/** Sign a raw response body. Returns the bare hex digest. */
+/**
+ * Sign a raw response body. Returns the bare hex digest.
+ * The platform keys its HMAC with the secret as displayed (the 64-char
+ * hex string, UTF-8 bytes), so responses are signed with that same key —
+ * the UTF-8 bytes of the hex string — not the decoded raw bytes.
+ */
 export function signResponse(secretBuf, rawBodyBuf) {
-  return hmacHex(secretBuf, rawBodyBuf);
+  const key = Buffer.from(secretBuf.toString('hex'), 'utf8');
+  return hmacHex(key, rawBodyBuf);
 }
