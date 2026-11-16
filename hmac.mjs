@@ -4,7 +4,6 @@
  * The platform sends every task with an `x-agent-games-signature` header:
  * an HMAC over the RAW request body, keyed with the 32-byte secret issued
  * at agent registration. Responses must be signed the same way.
- *
  * The secret is read from AGENT_GAMES_HMAC_SECRET (never hardcoded).
  * Accepted secret formats:
  *   - 64 hex chars  -> 32 raw bytes (most likely platform format)
@@ -15,8 +14,14 @@
  * exact wire format, so we accept the common ones):
  *   - bare lowercase/uppercase hex
  *   - "sha256=<hex>"
+ *   - "v1=<hex>" (including Stripe-style "t=<ts>,v1=<hex>")
  *   - base64 of the raw HMAC bytes
+ *
+ * Key encodings: the platform displays the secret as a 64-char hex string.
+ * It may key the HMAC with the decoded 32 raw bytes OR with the UTF-8
+ * bytes of the hex string itself, so verification tries both.
  */
+
 import crypto from 'node:crypto';
 
 /** Parse the secret env value into a Buffer of key bytes. Returns null if unset/empty. */
@@ -49,22 +54,34 @@ export function verifySignature(secretBuf, rawBodyBuf, headerValue) {
   if (!headerValue || typeof headerValue !== 'string') {
     return { ok: false, reason: 'missing-signature-header' };
   }
-  const h = headerValue.trim();
-  const candidates = [];
-  // Strip a "sha256=" prefix if present.
-  const bare = h.replace(/^sha256=/i, '');
-  // Hex candidate (the computed digest).
-  candidates.push(hmacHex(secretBuf, rawBodyBuf));
-  // Base64 candidate.
-  candidates.push(hmacBase64(secretBuf, rawBodyBuf));
+  let h = headerValue.trim();
+  // Stripe-style combined header "t=<ts>,v1=<hex>" — extract the v1 value.
+  const v1Match = h.match(/(?:^|,)v1=([0-9a-fA-F]{64})(?:,|$)/);
+  if (v1Match) h = v1Match[1];
+  // Strip a "sha256=" or "v1=" prefix if present.
+  const bare = h.replace(/^(?:sha256|v1)=/i, '');
 
-  for (const cand of candidates) {
-    // Compare case-insensitively for hex.
-    if (bare.length === cand.length) {
-      const a = Buffer.from(bare.toLowerCase(), 'utf8');
-      const b = Buffer.from(cand.toLowerCase(), 'utf8');
-      if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
-        return { ok: true };
+  // Try both key encodings: the decoded 32 raw bytes, and the UTF-8 bytes
+  // of the hex string itself (the platform may key with either).
+  const keyBuffers = [secretBuf];
+  const hexAsUtf8 = Buffer.from(secretBuf.toString('hex'), 'utf8');
+  if (!hexAsUtf8.equals(secretBuf)) keyBuffers.push(hexAsUtf8);
+
+  for (const key of keyBuffers) {
+    const candidates = [];
+    // Hex candidate (the computed digest).
+    candidates.push(hmacHex(key, rawBodyBuf));
+    // Base64 candidate.
+    candidates.push(hmacBase64(key, rawBodyBuf));
+
+    for (const cand of candidates) {
+      // Compare case-insensitively for hex.
+      if (bare.length === cand.length) {
+        const a = Buffer.from(bare.toLowerCase(), 'utf8');
+        const b = Buffer.from(cand.toLowerCase(), 'utf8');
+        if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+          return { ok: true };
+        }
       }
     }
   }
