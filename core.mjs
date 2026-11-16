@@ -22,6 +22,7 @@ import {
 } from './zkverify.mjs';
 
 const GATEKEEPER_TYPE = 'agent-games.proof-gatekeeper.v1';
+const PREFLIGHT_TYPE = 'agent-games.preflight.v1';
 
 export function createCore({ secretBuf, store }) {
   const strictMode = isStrictMode();
@@ -52,6 +53,15 @@ export function createCore({ secretBuf, store }) {
       log({ event: 'task-rejected', reason: 'invalid-json' });
       return { status: 400, body: { error: 'invalid JSON' } };
     }
+
+    // Preflight: the platform's signed reachability probe. It carries no
+    // task_id/input, so answer it right after parsing, before the
+    // task-envelope validation below.
+    if (env && typeof env === 'object' && env.type === PREFLIGHT_TYPE) {
+      log({ event: 'preflight-ok' });
+      return { status: 200, body: { ok: true, protocolVersion: 'v1' } };
+    }
+
     if (!env || typeof env !== 'object' || typeof env.task_id !== 'string' || !env.task_id) {
       log({ event: 'task-rejected', reason: 'missing-task-id' });
       return { status: 400, body: { error: 'missing task_id' } };
@@ -98,7 +108,6 @@ export function createCore({ secretBuf, store }) {
 
     // 5. Decide (all 7 trap checks).
     const response = decide(env.input, store.seenProofs);
-
     // 6. Persist: record the response; on APPROVE, remember the proof ref.
     if (response.decision === 'APPROVE' && response.proof_tx) {
       store.markProofSeen(response.proof_tx);
